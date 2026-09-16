@@ -2,6 +2,28 @@
 BACKGROUND
 ==============================*/
 
+/* برای اینکه موقعیت گرادیانت‌ها قابل انیمیشن باشه */
+@property --x1{
+    syntax:'<percentage>';
+    inherits:false;
+    initial-value:96%;
+}
+@property --y1{
+    syntax:'<percentage>';
+    inherits:false;
+    initial-value:4%;
+}
+@property --x2{
+    syntax:'<percentage>';
+    inherits:false;
+    initial-value:4%;
+}
+@property --y2{
+    syntax:'<percentage>';
+    inherits:false;
+    initial-value:96%;
+}
+
 .background{
 
     position:fixed;
@@ -12,16 +34,16 @@ BACKGROUND
 
     overflow:hidden;
 
-    transition:transform .4s ease-out;
-
-    will-change:transform;
-
-    transform-origin:center center;
-
     background:
-    radial-gradient(circle at top,var(--primary-a18) 0%,transparent 45%),
-    radial-gradient(circle at bottom,rgba(55,224,212,.09) 0%,transparent 40%),
+    radial-gradient(130% 130% at var(--x1) var(--y1), var(--primary-a45) 0%, transparent 58%),
+    radial-gradient(130% 130% at var(--x2) var(--y2), rgba(55,224,212,.3) 0%, transparent 58%),
     var(--bg);
+
+    transition:
+        --x1 .5s ease-out,
+        --y1 .5s ease-out,
+        --x2 .5s ease-out,
+        --y2 .5s ease-out;
 
 }
 
@@ -46,47 +68,5 @@ BACKGROUND
 .noise{
 
     display:none;
-
-}
-
-.aurora{
-
-    position:absolute;
-
-    width:700px;
-
-    height:700px;
-
-    border-radius:50%;
-
-    filter:blur(140px);
-
-    animation:float 16s ease-in-out infinite;
-
-}
-
-.aurora-1{
-
-    background:var(--primary);
-
-    top:-260px;
-
-    right:-180px;
-
-    opacity:.55;
-
-}
-
-.aurora-2{
-
-    background:var(--accent);
-
-    left:-220px;
-
-    bottom:-260px;
-
-    animation-delay:6s;
-
-    opacity:.4;
 
 }

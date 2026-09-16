@@ -10,7 +10,7 @@ SCROLLBAR
 
 ::-webkit-scrollbar-track{
 
-    background:#0b0b10;
+    background:var(--bg);
 
 }
 
@@ -19,7 +19,7 @@ SCROLLBAR
     background:linear-gradient(
     180deg,
     var(--primary),
-    var(--secondary));
+    var(--accent));
 
     border-radius:100px;
 

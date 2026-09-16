@@ -94,7 +94,6 @@ window.addEventListener("scroll", () => {
 });
 
 
-جایگزین کن با:
 
 /*==============================
 BACKGROUND ORBIT ON SCROLL
@@ -110,12 +109,22 @@ window.addEventListener("scroll", () => {
 
     const percent = window.scrollY / total;
 
-    const angle = percent * 720;
+    const angle = (-45 + percent * 360) * Math.PI / 180;
 
-    bgLayer.style.transform = `rotate(${angle}deg)`;
+    const radius = 65;
+
+    const x1 = 50 + Math.cos(angle) * radius;
+    const y1 = 50 + Math.sin(angle) * radius;
+
+    const x2 = 50 - Math.cos(angle) * radius;
+    const y2 = 50 - Math.sin(angle) * radius;
+
+    bgLayer.style.setProperty("--x1", x1 + "%");
+    bgLayer.style.setProperty("--y1", y1 + "%");
+    bgLayer.style.setProperty("--x2", x2 + "%");
+    bgLayer.style.setProperty("--y2", y2 + "%");
 
 });
-
 
 /*==============================
 HEADER SCROLL

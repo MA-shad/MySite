@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% load jformat %}
-
+{% load website_tags %}
 {% block content %}
 
 <section class="hero" id="home">
@@ -249,7 +249,7 @@
 
                     <p>
 
-                        {{ project.description }}
+                        {{ project.description|short_description:120 }}
 
                     </p>
 
