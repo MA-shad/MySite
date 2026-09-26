@@ -76,3 +76,10 @@ def blog_detail(request, id=None, slug=None):
         }
     )
 
+
+def test_view(request):
+
+    if request.method == "POST":
+        print(request.POST.get("name"))
+
+    return render(request, "test.html")
