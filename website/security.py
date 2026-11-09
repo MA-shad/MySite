@@ -33,3 +33,4 @@ def generate_ip_hash(ip: str) -> str:
     secret_key = settings.SECRET_KEY.encode("utf-8")
     ip_bytes = ip.encode("utf-8")
     return hmac.new(secret_key, ip_bytes, hashlib.sha256).hexdigest()
+

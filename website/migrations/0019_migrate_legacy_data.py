@@ -78,3 +78,4 @@ class Migration(migrations.Migration):
     operations = [
         migrations.RunPython(migrate_legacy_data, reverse_migration),
     ]
+
