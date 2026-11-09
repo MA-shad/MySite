@@ -11,3 +11,4 @@ class ContactBurstThrottle(AnonRateThrottle):
     """محدودکننده ضربانی برای جلوگیری از ثبت متوالی زیر ۱ دقیقه."""
     scope = "contact_burst"
     rate = "1/minute"
+

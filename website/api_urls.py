@@ -25,3 +25,4 @@ urlpatterns = [
     path("contact/", ContactCreateAPIView.as_view(), name="contact"),
     path("", include(router.urls)),
 ]
+

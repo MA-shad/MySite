@@ -167,7 +167,7 @@ class ContactMessageSerializer(serializers.ModelSerializer):
         ]
 
     def validate_name(self, value):
-        cleaned = html.escape(value.strip())
+        cleaned = value.strip()
         if len(cleaned) < 2:
             raise serializers.ValidationError("نام باید حداقل شامل ۲ کاراکتر باشد.")
         if len(cleaned) > 100:
@@ -175,7 +175,7 @@ class ContactMessageSerializer(serializers.ModelSerializer):
         return cleaned
 
     def validate_subject(self, value):
-        cleaned = html.escape(value.strip())
+        cleaned = value.strip()
         if len(cleaned) < 3:
             raise serializers.ValidationError("موضوع پیام باید حداقل شامل ۳ کاراکتر باشد.")
         if len(cleaned) > 150:
@@ -183,7 +183,7 @@ class ContactMessageSerializer(serializers.ModelSerializer):
         return cleaned
 
     def validate_message(self, value):
-        cleaned = html.escape(value.strip())
+        cleaned = value.strip()
         if len(cleaned) < 10:
             raise serializers.ValidationError("متن پیام باید حداقل شامل ۱۰ کاراکتر باشد.")
         if len(cleaned) > 3000:
@@ -194,3 +194,4 @@ class ContactMessageSerializer(serializers.ModelSerializer):
         # حذف فیلد هانی‌پات پیش از ذخیره در دیتابیس
         validated_data.pop("website_source_url", None)
         return super().create(validated_data)
+

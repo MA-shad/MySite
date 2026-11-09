@@ -1,4 +1,5 @@
 import hashlib
+from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, permissions, status, filters
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -33,6 +34,7 @@ from .serializers import (
     ContactMessageSerializer,
 )
 from .throttles import ContactRateThrottle, ContactBurstThrottle
+from .security import get_client_ip, generate_ip_hash
 
 
 class InitialDataAPIView(APIView):
@@ -113,12 +115,16 @@ class ProjectViewSet(viewsets.ReadOnlyModelViewSet):
     lookup_field = "slug"
 
     def get_object(self):
+        queryset = self.filter_queryset(self.get_queryset())
         lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
         lookup_value = self.kwargs[lookup_url_kwarg]
-        # در صورتی که پارامتر ارسالی عدد باشد بر اساس id و در غیر این صورت بر اساس slug واکشی می‌شود
+        # در صورتی که پارامتر ارسالی عدد باشد بر اساس id و در غیر این صورت بر اساس slug واکشی استاندارد انجام می‌شود
         if lookup_value.isdigit():
-            return Project.objects.prefetch_related("technologies").get(id=int(lookup_value))
-        return super().get_object()
+            obj = get_object_or_404(queryset, id=int(lookup_value))
+        else:
+            obj = get_object_or_404(queryset, slug=lookup_value)
+        self.check_object_permissions(self.request, obj)
+        return obj
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -193,16 +199,11 @@ class ContactCreateAPIView(CreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        # ۲. محاسبه هش نشانی آی‌پی برای حفظ حریم خصوصی
-        x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
-        if x_forwarded_for:
-            ip = x_forwarded_for.split(",")[0].strip()
-        else:
-            ip = request.META.get("REMOTE_ADDR", "")
+        # ۲. استخراج نشانی آی‌پی و محاسبه هش امن یک‌طرفه با الگوریتم HMAC-SHA256
+        client_ip = get_client_ip(request)
+        ip_hash = generate_ip_hash(client_ip)
 
-        ip_hash = hashlib.sha256(ip.encode("utf-8")).hexdigest() if ip else ""
-
-        # ۳. ذخیره ایمن
+        # ۳. ذخیره ایمن پیام در دیتابیس
         contact_message = serializer.save(ip_hash=ip_hash)
 
         return Response(
@@ -212,3 +213,4 @@ class ContactCreateAPIView(CreateAPIView):
             },
             status=status.HTTP_201_CREATED,
         )
+

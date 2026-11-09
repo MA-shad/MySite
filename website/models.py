@@ -52,6 +52,11 @@ class Profile(models.Model):
         if not self.pk and Profile.objects.exists():
             raise ValidationError("تنها یک رکورد پروفایل مجاز است.")
 
+    def save(self, *args, **kwargs):
+        if not self.pk and Profile.objects.exists():
+            raise ValidationError("تنها یک رکورد پروفایل مجاز است.")
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.name_fa} ({self.name_en})"
 
@@ -202,6 +207,18 @@ class Project(models.Model):
         verbose_name = "پروژه نمونه‌کار"
         verbose_name_plural = "پروژه‌ها"
         ordering = ["order", "id"]
+
+    def save(self, *args, **kwargs):
+        if not self.slug and self.title:
+            from django.utils.text import slugify
+            base_slug = slugify(self.title, allow_unicode=True) or f"project-{self.pk or 'new'}"
+            slug = base_slug
+            counter = 1
+            while Project.objects.filter(slug=slug).exclude(pk=self.pk).exists():
+                slug = f"{base_slug}-{counter}"
+                counter += 1
+            self.slug = slug
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.title

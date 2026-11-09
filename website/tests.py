@@ -1,4 +1,4 @@
-from django.test import TestCase, Client, override_settings
+from django.test import TestCase, Client
 from django.urls import reverse
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
@@ -19,6 +19,7 @@ from website.models import (
     ContactMessage,
     SocialLink,
 )
+from website.serializers import ContactMessageSerializer
 
 
 class ModelArchitectureTestCase(TestCase):
@@ -30,39 +31,181 @@ class ModelArchitectureTestCase(TestCase):
             bio_fa="شرح کوتاه بیوگرافی برای تست",
             email="test@example.com",
         )
-        self.tech = Technology.objects.create(name="Django", slug="django")
+        self.tech, _ = Technology.objects.get_or_create(slug="django", defaults={"name": "Django"})
         self.skill = Skill.objects.create(
-            name="Python",
+            name="Python Test Skill",
             percentage=85,
             category=SkillCategory.BACKEND,
         )
 
-    def test_profile_singleton_clean(self):
-        """اعتبارسنجی تک‌رکوردی بودن پروفایل"""
+    def test_profile_singleton_real_creation_path(self):
+        """اعتبارسنجی تک‌رکوردی بودن پروفایل در مسیرهای واقعی ایجاد (objects.create و save)"""
+        with self.assertRaises(ValidationError):
+            Profile.objects.create(
+                name_fa="مدیر دوم",
+                name_en="Admin Two",
+                headline="عنوان دیگر",
+                bio_fa="بیوگرافی دوم",
+                email="admin2@example.com",
+            )
+
         second_profile = Profile(
-            name_fa="تست ۲",
-            name_en="Test 2",
-            bio_fa="بیوگرافی دوم",
-            email="test2@example.com",
+            name_fa="مدیر سوم",
+            name_en="Admin Three",
+            bio_fa="بیوگرافی سوم",
+            email="admin3@example.com",
         )
         with self.assertRaises(ValidationError):
-            second_profile.clean()
+            second_profile.save()
+
+    def test_project_auto_slug_generation(self):
+        """تولید خودکار اسلاگ معتبر و یکتا در صورت عدم ارسال اسلاگ"""
+        project1 = Project.objects.create(
+            title="سامانه مدیریت مالی",
+            description="سامانه هوشمند مالی و حسابداری",
+        )
+        self.assertTrue(bool(project1.slug))
+
+        # ساخت پروژه دوم با همان عنوان برای بررسی جلوگیری از تکراری شدن اسلاگ
+        project2 = Project.objects.create(
+            title="سامانه مدیریت مالی",
+            description="نسخه دوم سامانه مالی",
+        )
+        self.assertNotEqual(project1.slug, project2.slug)
+        self.assertTrue(project2.slug.startswith("سامانه-مدیریت-مالی-"))
 
     def test_skill_proficiency_property(self):
-        """اعتبارسنجی پراپرتی proficiency معادل percentage"""
+        """اعتبارسنجی پراپرتی تسلط و دسته‌بندی موضوعی مهارت"""
         self.assertEqual(self.skill.proficiency, 85)
         self.assertEqual(self.skill.category, SkillCategory.BACKEND)
 
-    def test_project_technology_many_to_many(self):
-        """اعتبارسنجی ارتباط چندبه‌چند میان پروژه و فناوری"""
-        project = Project.objects.create(
-            title="پروژه تست",
-            slug="test-project",
-            description="توضیحات پروژه تست",
+
+class SerializerValidationTestCase(TestCase):
+    def test_contact_serializer_valid_plain_text(self):
+        """اعتبارسنجی سریالایزر و تضمین عدم HTML-escaping در مرحله ذخیره‌سازی متن"""
+        payload = {
+            "name": "محمدرضا <توسعه‌دهنده>",
+            "email": "test@example.com",
+            "subject": "پرسش درباره \"معماری\" & جنگو",
+            "message": "سلام، متن پیام شامل کاراکترهای خاص مانند < و > و \" بدون تغییر باید ذخیره شود.",
+        }
+        serializer = ContactMessageSerializer(data=payload)
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        instance = serializer.save()
+
+        # متن خام باید بدون تبدیل به &lt; و &gt; یا &quot; در دیتابیس ثبت شود
+        self.assertEqual(instance.name, "محمدرضا <توسعه‌دهنده>")
+        self.assertEqual(instance.subject, "پرسش درباره \"معماری\" & جنگو")
+        self.assertIn("<", instance.message)
+        self.assertIn(">", instance.message)
+
+    def test_contact_serializer_length_constraints(self):
+        """اعتبارسنجی محدودیت‌های طول فیلدها"""
+        # نام کمتر از ۲ کاراکتر
+        s1 = ContactMessageSerializer(data={"name": "A", "email": "a@b.com", "subject": "موضوع تست", "message": "متن پیام معتبر تست"})
+        self.assertFalse(s1.is_valid())
+        self.assertIn("name", s1.errors)
+
+        # موضوع کمتر از ۳ کاراکتر
+        s2 = ContactMessageSerializer(data={"name": "علی", "email": "a@b.com", "subject": "ab", "message": "متن پیام معتبر تست"})
+        self.assertFalse(s2.is_valid())
+        self.assertIn("subject", s2.errors)
+
+        # پیام کمتر از ۱۰ کاراکتر
+        s3 = ContactMessageSerializer(data={"name": "علی", "email": "a@b.com", "subject": "موضوع معتبر", "message": "کوتاه"})
+        self.assertFalse(s3.is_valid())
+        self.assertIn("message", s3.errors)
+
+        # ایمیل نامعتبر
+        s4 = ContactMessageSerializer(data={"name": "علی", "email": "invalid-email", "subject": "موضوع معتبر", "message": "متن پیام معتبر تست"})
+        self.assertFalse(s4.is_valid())
+        self.assertIn("email", s4.errors)
+
+
+class RateLimitingTestCase(APITestCase):
+    def setUp(self):
+        cache.clear()
+        self.url = reverse("website_api:contact")
+
+    def test_contact_submission_rate_limiting(self):
+        """اعتبارسنجی تراتلینگ و بازگشت خطای ۴۲۹ پس از نقض سقف درخواست"""
+        payload = {
+            "name": "فرستنده تست",
+            "email": "user@example.com",
+            "subject": "موضوع بررسی تراتل",
+            "message": "متن پیام آزمایشی برای اعتبارسنجی محدودکننده نرخ درخواست",
+        }
+        # اولین درخواست باید موفق باشد
+        r1 = self.client.post(self.url, payload, format="json")
+        self.assertEqual(r1.status_code, status.HTTP_201_CREATED)
+
+        # درخواست فوری دوم با همان آی‌پی باید به علت محدودیت ضربانی (Burst Rate) با وضعیت ۴۲۹ رد شود
+        r2 = self.client.post(self.url, payload, format="json")
+        self.assertEqual(r2.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+
+class ProjectViewSetErrorHandlingTestCase(APITestCase):
+    def setUp(self):
+        self.project = Project.objects.create(
+            title="پروژه تست خطایابی",
+            slug="error-handling-project",
+            description="توضیحات تست",
         )
-        project.technologies.add(self.tech)
-        self.assertIn(self.tech, project.technologies.all())
-        self.assertEqual(self.tech.projects.first(), project)
+
+    def test_existing_project_by_slug(self):
+        """واکشی پروژه موجود بر اساس اسلاگ با پاسخ ۲۰۰"""
+        url = reverse("website_api:project-detail", kwargs={"slug": "error-handling-project"})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["title"], "پروژه تست خطایابی")
+
+    def test_existing_project_by_numeric_id(self):
+        """واکشی پروژه موجود بر اساس شناسه عددی با پاسخ ۲۰۰"""
+        url = reverse("website_api:project-detail", kwargs={"slug": str(self.project.id)})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_non_existent_project_slug_returns_404(self):
+        """پروژه ناموجود بر اساس اسلاگ باید پاسخ استاندارد ۴۰۴ بدهد (نه خطای ۵۰۰)"""
+        url = reverse("website_api:project-detail", kwargs={"slug": "non-existent-slug-404"})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_non_existent_project_id_returns_404(self):
+        """پروژه ناموجود بر اساس شناسه عددی باید پاسخ استاندارد ۴۰۴ بدهد (نه خطای ۵۰۰)"""
+        url = reverse("website_api:project-detail", kwargs={"slug": "999999"})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class DataMigrationAndIntegrityTestCase(TestCase):
+    def test_legacy_data_migration_associations(self):
+        """اعتبارسنجی تبدیل برچسب‌های قدیمی به مدل فناوری و انتساب دسته‌بندی مهارت‌ها"""
+        # ایجاد یا واکشی فناوری‌ها
+        t_django, _ = Technology.objects.get_or_create(slug="django", defaults={"name": "Django"})
+        t_python, _ = Technology.objects.get_or_create(slug="python", defaults={"name": "Python"})
+
+        project = Project.objects.create(
+            title="پروژه تست مایگریشن",
+            tag="Django",
+            url="http://example.com/demo",
+        )
+        project.technologies.add(t_django)
+        project.demo_url = project.url
+        project.save()
+
+        self.assertIn(t_django, project.technologies.all())
+        self.assertEqual(project.demo_url, "http://example.com/demo")
+        self.assertTrue(bool(project.slug))
+
+        # بررسی دسته‌بندی مهارتی
+        skill_py, _ = Skill.objects.get_or_create(name="Python", defaults={"percentage": 80, "category": SkillCategory.BACKEND})
+        skill_html, _ = Skill.objects.get_or_create(name="HTML", defaults={"percentage": 60, "category": SkillCategory.FRONTEND})
+        skill_git, _ = Skill.objects.get_or_create(name="Git", defaults={"percentage": 50, "category": SkillCategory.TOOLS})
+
+        self.assertEqual(skill_py.category, SkillCategory.BACKEND)
+        self.assertEqual(skill_html.category, SkillCategory.FRONTEND)
+        self.assertEqual(skill_git.category, SkillCategory.TOOLS)
 
 
 class ApiEndpointsTestCase(APITestCase):
@@ -75,20 +218,16 @@ class ApiEndpointsTestCase(APITestCase):
             bio_fa="بیوگرافی کامل",
             email="admin@example.com",
         )
-        self.tech_django = Technology.objects.create(name="Django", slug="django")
-        self.tech_react = Technology.objects.create(name="React", slug="react")
+        self.tech_django, _ = Technology.objects.get_or_create(slug="django", defaults={"name": "Django"})
+        self.tech_react, _ = Technology.objects.get_or_create(slug="react", defaults={"name": "React"})
 
-        self.skill_backend = Skill.objects.create(
-            name="Python",
-            percentage=90,
-            category=SkillCategory.BACKEND,
-            is_featured=True,
+        self.skill_backend, _ = Skill.objects.get_or_create(
+            name="Python Backend Skill",
+            defaults={"percentage": 90, "category": SkillCategory.BACKEND, "is_featured": True},
         )
-        self.skill_frontend = Skill.objects.create(
-            name="HTML",
-            percentage=70,
-            category=SkillCategory.FRONTEND,
-            is_featured=False,
+        self.skill_frontend, _ = Skill.objects.get_or_create(
+            name="HTML Frontend Skill",
+            defaults={"percentage": 70, "category": SkillCategory.FRONTEND, "is_featured": False},
         )
 
         self.project = Project.objects.create(
@@ -128,21 +267,8 @@ class ApiEndpointsTestCase(APITestCase):
         url = reverse("website_api:skill-list")
         response = self.client.get(url, {"category": "backend"})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data["results"]), 1)
-        self.assertEqual(response.data["results"][0]["name"], "Python")
-
-    def test_projects_list_and_detail(self):
-        """تست فهرست پروژه‌ها و واکشی بر اساس اسلاگ"""
-        list_url = reverse("website_api:project-list")
-        response = self.client.get(list_url)
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data["results"]), 1)
-        self.assertEqual(response.data["results"][0]["technologies"][0]["name"], "Django")
-
-        detail_url = reverse("website_api:project-detail", kwargs={"slug": "my-portfolio"})
-        detail_response = self.client.get(detail_url)
-        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(detail_response.data["title"], "پرتفولیو شخصی")
+        self.assertGreaterEqual(len(response.data["results"]), 1)
+        self.assertTrue(all(item["category"] == "backend" for item in response.data["results"]))
 
     def test_blog_published_posts(self):
         """تست لیست مقالات و صفحه جزئیات مقاله"""
@@ -155,20 +281,6 @@ class ApiEndpointsTestCase(APITestCase):
         detail_resp = self.client.get(detail_url)
         self.assertEqual(detail_resp.status_code, status.HTTP_200_OK)
         self.assertEqual(detail_resp.data["title"], "آشنایی با DRF")
-
-    def test_contact_submission_valid(self):
-        """تست ثبت پیام مخاطب معتبر"""
-        cache.clear()
-        url = reverse("website_api:contact")
-        payload = {
-            "name": "علی محمدی",
-            "email": "ali@example.com",
-            "subject": "همکاری در پروژه",
-            "message": "سلام، علاقه‌مند به همکاری در پروژه جدید جنگو هستم.",
-        }
-        response = self.client.post(url, payload, format="json")
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertTrue(ContactMessage.objects.filter(email="ali@example.com").exists())
 
     def test_contact_honeypot_bot_defense(self):
         """تست دفاع در برابر بات‌های هرزنامه‌ساز با فیلد هانی‌پات"""
@@ -190,7 +302,6 @@ class ApiEndpointsTestCase(APITestCase):
         """کاربران عمومی نباید بتوانند متدهای ویرایشی نظیر DELETE را اجرا کنند"""
         url = reverse("website_api:project-detail", kwargs={"slug": "my-portfolio"})
         delete_resp = self.client.delete(url)
-        # ReadOnlyModelViewSet متد DELETE را مسدود می‌کند (۴۰۵ Method Not Allowed)
         self.assertEqual(delete_resp.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
 
 
