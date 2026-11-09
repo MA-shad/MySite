@@ -1,7 +1,11 @@
-from django.test import TestCase, Client
+from django.test import TestCase, Client, TransactionTestCase
 from django.urls import reverse
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
+from django.db import connection
+from django.db.utils import IntegrityError
+from django.db.migrations.executor import MigrationExecutor
+from django.test.client import RequestFactory
 from rest_framework.test import APITestCase
 from rest_framework import status
 
@@ -20,6 +24,7 @@ from website.models import (
     SocialLink,
 )
 from website.serializers import ContactMessageSerializer
+from website.security import get_client_ip, generate_ip_hash
 
 
 class ModelArchitectureTestCase(TestCase):
@@ -27,9 +32,10 @@ class ModelArchitectureTestCase(TestCase):
         self.profile = Profile.objects.create(
             name_fa="هپی کد",
             name_en="HappyCode",
-            headline="توسعه‌دهنده جنگو",
+            headline="",
             bio_fa="شرح کوتاه بیوگرافی برای تست",
             email="test@example.com",
+            is_available_for_hire=False,
         )
         self.tech, _ = Technology.objects.get_or_create(slug="django", defaults={"name": "Django"})
         self.skill = Skill.objects.create(
@@ -39,7 +45,7 @@ class ModelArchitectureTestCase(TestCase):
         )
 
     def test_profile_singleton_real_creation_path(self):
-        """اعتبارسنجی تک‌رکوردی بودن پروفایل در مسیرهای واقعی ایجاد (objects.create و save)"""
+        """اعتبارسنجی تک‌رکوردی بودن پروفایل در مسیرهای پایتونی (objects.create و save)"""
         with self.assertRaises(ValidationError):
             Profile.objects.create(
                 name_fa="مدیر دوم",
@@ -57,6 +63,19 @@ class ModelArchitectureTestCase(TestCase):
         )
         with self.assertRaises(ValidationError):
             second_profile.save()
+
+    def test_profile_singleton_bulk_create_bypass_prevented(self):
+        """تضمین جلوگیری از دور زدن اعتبارسنجی تک‌رکوردی با bulk_create در لایه دیتابیس"""
+        with self.assertRaises(IntegrityError):
+            Profile.objects.bulk_create([
+                Profile(
+                    name_fa="مدیر دورزننده",
+                    name_en="Bypass Admin",
+                    bio_fa="تلاش برای درج رکورد دوم از طریق بالک",
+                    email="bypass@example.com",
+                    is_singleton=True,
+                )
+            ])
 
     def test_project_auto_slug_generation(self):
         """تولید خودکار اسلاگ معتبر و یکتا در صورت عدم ارسال اسلاگ"""
@@ -82,7 +101,7 @@ class ModelArchitectureTestCase(TestCase):
 
 class SerializerValidationTestCase(TestCase):
     def test_contact_serializer_valid_plain_text(self):
-        """اعتبارسنجی سریالایزر و تضمین عدم HTML-escaping در مرحله ذخیره‌سازی متن"""
+        """اعتبارسنجی سریالایزر و تضمین عدم تغییر کاراکترها در مرحله ذخیره‌سازی متن"""
         payload = {
             "name": "محمدرضا <توسعه‌دهنده>",
             "email": "test@example.com",
@@ -93,7 +112,7 @@ class SerializerValidationTestCase(TestCase):
         self.assertTrue(serializer.is_valid(), serializer.errors)
         instance = serializer.save()
 
-        # متن خام باید بدون تبدیل به &lt; و &gt; یا &quot; در دیتابیس ثبت شود
+        # متن خام باید بدون تبدیل به کاراکترهای اسکیپ شده در دیتابیس ثبت شود
         self.assertEqual(instance.name, "محمدرضا <توسعه‌دهنده>")
         self.assertEqual(instance.subject, "پرسش درباره \"معماری\" & جنگو")
         self.assertIn("<", instance.message)
@@ -139,7 +158,7 @@ class RateLimitingTestCase(APITestCase):
         r1 = self.client.post(self.url, payload, format="json")
         self.assertEqual(r1.status_code, status.HTTP_201_CREATED)
 
-        # درخواست فوری دوم با همان آی‌پی باید به علت محدودیت ضربانی (Burst Rate) با وضعیت ۴۲۹ رد شود
+        # درخواست فوری دوم با همان آی‌پی باید به علت محدودیت ضربانی با وضعیت ۴۲۹ رد شود
         r2 = self.client.post(self.url, payload, format="json")
         self.assertEqual(r2.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
 
@@ -178,34 +197,137 @@ class ProjectViewSetErrorHandlingTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
 
-class DataMigrationAndIntegrityTestCase(TestCase):
-    def test_legacy_data_migration_associations(self):
-        """اعتبارسنجی تبدیل برچسب‌های قدیمی به مدل فناوری و انتساب دسته‌بندی مهارت‌ها"""
-        # ایجاد یا واکشی فناوری‌ها
-        t_django, _ = Technology.objects.get_or_create(slug="django", defaults={"name": "Django"})
-        t_python, _ = Technology.objects.get_or_create(slug="python", defaults={"name": "Python"})
+class SecurityAndIpExtractionTestCase(TestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
 
-        project = Project.objects.create(
-            title="پروژه تست مایگریشن",
-            tag="Django",
-            url="http://example.com/demo",
-        )
-        project.technologies.add(t_django)
-        project.demo_url = project.url
-        project.save()
+    def test_get_client_ip_direct_connection(self):
+        """در اتصال مستقیم بدون پروکسی، نشانی اتصال مستقیم کلاینت بازگردانده می‌شود"""
+        request = self.factory.get("/")
+        request.META["REMOTE_ADDR"] = "192.0.2.1"
+        self.assertEqual(get_client_ip(request), "192.0.2.1")
 
-        self.assertIn(t_django, project.technologies.all())
-        self.assertEqual(project.demo_url, "http://example.com/demo")
-        self.assertTrue(bool(project.slug))
+    def test_get_client_ip_render_reverse_proxy_trust(self):
+        """اتکا به آخرین نشانی در زنجیره برای انطباق با لودبالانسر Render و جلوگیری از جعل آی‌پی"""
+        request = self.factory.get("/")
+        request.META["HTTP_X_FORWARDED_FOR"] = "203.0.113.195, 70.41.3.18, 198.51.100.2"
+        request.META["REMOTE_ADDR"] = "10.0.0.1"
+        # آخرین آی‌پی زنجیره نشانی واقعی ثبت‌شده توسط نزدیک‌ترین پروکسی معتبر است
+        self.assertEqual(get_client_ip(request), "198.51.100.2")
 
-        # بررسی دسته‌بندی مهارتی
-        skill_py, _ = Skill.objects.get_or_create(name="Python", defaults={"percentage": 80, "category": SkillCategory.BACKEND})
-        skill_html, _ = Skill.objects.get_or_create(name="HTML", defaults={"percentage": 60, "category": SkillCategory.FRONTEND})
-        skill_git, _ = Skill.objects.get_or_create(name="Git", defaults={"percentage": 50, "category": SkillCategory.TOOLS})
+    def test_generate_ip_hash_hmac_sha256(self):
+        """محاسبه هش یک‌طرفه امن نشانی آی‌پی با طول ۶۴ کاراکتر هگزادسیمال بر پایه اچ‌مک"""
+        hash1 = generate_ip_hash("198.51.100.2")
+        hash2 = generate_ip_hash("198.51.100.2")
+        hash3 = generate_ip_hash("203.0.113.5")
 
-        self.assertEqual(skill_py.category, SkillCategory.BACKEND)
-        self.assertEqual(skill_html.category, SkillCategory.FRONTEND)
-        self.assertEqual(skill_git.category, SkillCategory.TOOLS)
+        self.assertEqual(len(hash1), 64)
+        self.assertEqual(hash1, hash2)
+        self.assertNotEqual(hash1, hash3)
+        self.assertEqual(generate_ip_hash(""), "")
+
+
+class RealDataMigrationTestCase(TransactionTestCase):
+    def test_migration_0019_real_execution(self):
+        """
+        اجرای واقعی مایگریشن 0019 روی داده‌های قدیمی از طریق MigrationExecutor:
+        ۱. بازگردانی دیتابیس به مایگریشن 0018
+        ۲. ایجاد داده‌های قدیمی با تگ‌های متنی و پیوندهای لوکال‌هاست
+        ۳. اعمال مایگریشن 0019 رو به جلو
+        ۴. اعتبارسنجی عدم ایجاد Technology به نام Front-End
+        ۵. اعتبارسنجی اتصال چندبه‌چند HTML, CSS, JavaScript برای پروژه فرانت‌اند
+        ۶. اعتبارسنجی باقی‌ماندن demo_url به صورت خالی و حفظ آدرس قدیمی در فیلد url
+        ۷. اعتبارسنجی تولید اسلاگ‌های یکتا و دسته‌بندی مهارتی دقیق
+        ۸. اعتبارسنجی عملیات برگشت مایگریشن
+        ۹. مهاجرت مجدد دیتابیس به آخرین مایگریشن برای پایداری وضعیت سیستم
+        """
+        executor = MigrationExecutor(connection)
+        migrate_0018 = [("website", "0018_technology_alter_aboutcard_options_and_more")]
+        migrate_0019 = [("website", "0019_migrate_legacy_data")]
+
+        try:
+            # ۱. عقب‌گرد به مایگریشن 0018
+            executor.migrate(migrate_0018)
+            old_state = executor.loader.project_state(migrate_0018)
+            OldProject = old_state.apps.get_model("website", "Project")
+            OldSkill = old_state.apps.get_model("website", "Skill")
+
+            # ۲. درج داده‌های سنتی متناظر با وضعیت اولیه پروژه
+            p_front = OldProject.objects.create(
+                title="قالب مدرن رابط کاربری",
+                tag="Front-End",
+                url="http://127.0.0.1:8080/#legacy-demo",
+                description="پروژه رابط کاربری بدون اسلاگ",
+            )
+            p_backend = OldProject.objects.create(
+                title="سیستم جامع مدیریت",
+                tag="Django",
+                url="http://localhost:8000/app",
+                description="پروژه جنگو با آدرس توسعه محلی",
+            )
+
+            s_py = OldSkill.objects.create(name="Python", percentage=90)
+            s_dj = OldSkill.objects.create(name="Django", percentage=85)
+            s_html = OldSkill.objects.create(name="HTML", percentage=80)
+            s_css = OldSkill.objects.create(name="CSS", percentage=75)
+            s_js = OldSkill.objects.create(name="JavaScript", percentage=70)
+            s_git = OldSkill.objects.create(name="Git", percentage=65)
+
+            # ۳. اجرای پیش‌رونده مایگریشن 0019
+            executor.loader.build_graph()
+            executor.migrate(migrate_0019)
+            new_state = executor.loader.project_state(migrate_0019)
+
+            NewProject = new_state.apps.get_model("website", "Project")
+            NewSkill = new_state.apps.get_model("website", "Skill")
+            NewTech = new_state.apps.get_model("website", "Technology")
+
+            # ۴. بررسی عدم ثبت Front-End به عنوان مدل فناوری مستقل
+            self.assertFalse(NewTech.objects.filter(name__iexact="Front-End").exists())
+            self.assertFalse(NewTech.objects.filter(slug__iexact="front-end").exists())
+
+            # ۵. بررسی انتساب فناوری‌های تشکیل‌دهنده فرانت‌اند (HTML, CSS, JS) به پروژه
+            p_front_migrated = NewProject.objects.get(id=p_front.id)
+            front_tech_slugs = set(p_front_migrated.technologies.values_list("slug", flat=True))
+            self.assertTrue({"html", "css", "javascript"}.issubset(front_tech_slugs))
+
+            # ۶. بررسی عدم کپی لوکال‌هاست به demo_url و حفظ url قدیمی
+            self.assertIsNone(p_front_migrated.demo_url)
+            self.assertEqual(p_front_migrated.url, "http://127.0.0.1:8080/#legacy-demo")
+
+            p_backend_migrated = NewProject.objects.get(id=p_backend.id)
+            self.assertIsNone(p_backend_migrated.demo_url)
+            self.assertEqual(p_backend_migrated.url, "http://localhost:8000/app")
+            self.assertTrue(p_backend_migrated.technologies.filter(slug="django").exists())
+
+            # ۷. بررسی تولید اسلاگ‌های معتبر
+            self.assertTrue(bool(p_front_migrated.slug))
+            self.assertTrue(bool(p_backend_migrated.slug))
+
+            # ۸. بررسی دسته‌بندی مهارتی دقیق
+            self.assertEqual(NewSkill.objects.get(id=s_py.id).category, "backend")
+            self.assertEqual(NewSkill.objects.get(id=s_dj.id).category, "backend")
+            self.assertEqual(NewSkill.objects.get(id=s_html.id).category, "frontend")
+            self.assertEqual(NewSkill.objects.get(id=s_css.id).category, "frontend")
+            self.assertEqual(NewSkill.objects.get(id=s_js.id).category, "frontend")
+            self.assertEqual(NewSkill.objects.get(id=s_git.id).category, "tools")
+
+            # ۹. بررسی بازگشت‌پذیری مایگریشن به 0018
+            executor.loader.build_graph()
+            executor.migrate(migrate_0018)
+            rev_state = executor.loader.project_state(migrate_0018)
+            RevProject = rev_state.apps.get_model("website", "Project")
+            RevSkill = rev_state.apps.get_model("website", "Skill")
+
+            p_rev = RevProject.objects.get(id=p_front.id)
+            self.assertEqual(p_rev.technologies.count(), 0)
+            self.assertIsNone(p_rev.demo_url)
+            self.assertEqual(RevSkill.objects.get(id=s_html.id).category, "backend")
+
+        finally:
+            # ۱۰. بازگردانی کامل ساختار پایگاه داده به آخرین مایگریشن
+            executor.loader.build_graph()
+            executor.migrate(executor.loader.graph.leaf_nodes())
 
 
 class ApiEndpointsTestCase(APITestCase):
@@ -214,9 +336,10 @@ class ApiEndpointsTestCase(APITestCase):
         self.profile = Profile.objects.create(
             name_fa="محمدعلی",
             name_en="MohammadAli",
-            headline="توسعه‌دهنده بک‌اند",
+            headline="",
             bio_fa="بیوگرافی کامل",
             email="admin@example.com",
+            is_available_for_hire=False,
         )
         self.tech_django, _ = Technology.objects.get_or_create(slug="django", defaults={"name": "Django"})
         self.tech_react, _ = Technology.objects.get_or_create(slug="react", defaults={"name": "React"})
@@ -311,9 +434,10 @@ class LegacyFrontendCompatibilityTestCase(TestCase):
         self.profile = Profile.objects.create(
             name_fa="هپی کد",
             name_en="HappyCode",
-            headline="توسعه‌دهنده جنگو",
+            headline="",
             bio_fa="بیوگرافی برای رندر تمپلیت",
             email="admin@example.com",
+            is_available_for_hire=False,
         )
         self.category = Category.objects.create(title="آموزش", slug="learn")
         self.blog_post = BlogPost.objects.create(
@@ -322,6 +446,7 @@ class LegacyFrontendCompatibilityTestCase(TestCase):
             category=self.category,
             description="توضیح پست اول",
             content="محتوا",
+            status=BlogPost.PostStatus.PUBLISHED,
         )
 
     def test_home_page_renders_cleanly(self):
@@ -337,3 +462,28 @@ class LegacyFrontendCompatibilityTestCase(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "blog_detail.html")
         self.assertContains(response, "پست اول")
+
+    def test_draft_blog_posts_hidden_from_public_views(self):
+        """مقالات در وضعیت پیش‌نویس (Draft) نباید در صفحه اصلی نمایش داده شوند و در صفحه جزئیات پاسخ ۴۰۴ می‌دهند"""
+        draft_post = BlogPost.objects.create(
+            title="مقاله پیش‌نویس محرمانه",
+            slug="secret-draft-post",
+            category=self.category,
+            description="این مقاله نباید در دید عموم باشد",
+            content="محتوای پیش‌نویس محرمانه...",
+            status=BlogPost.PostStatus.DRAFT,
+        )
+
+        # ۱. عدم نمایش در صفحه اصلی
+        home_resp = self.client.get(reverse("website:home"))
+        self.assertEqual(home_resp.status_code, 200)
+        self.assertContains(home_resp, "پست اول")
+        self.assertNotContains(home_resp, "مقاله پیش‌نویس محرمانه")
+
+        # ۲. بازگشت وضعیت ۴۰۴ در واکشی مستقیم با اسلاگ
+        detail_slug_resp = self.client.get(reverse("website:blog_detail_by_slug", kwargs={"slug": "secret-draft-post"}))
+        self.assertEqual(detail_slug_resp.status_code, 404)
+
+        # ۳. بازگشت وضعیت ۴۰۴ در واکشی مستقیم با شناسه عددی
+        detail_id_resp = self.client.get(reverse("website:blog_detail_by_id", kwargs={"id": draft_post.id}))
+        self.assertEqual(detail_id_resp.status_code, 404)

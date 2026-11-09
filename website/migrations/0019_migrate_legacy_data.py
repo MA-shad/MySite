@@ -7,36 +7,39 @@ def migrate_legacy_data(apps, schema_editor):
     Technology = apps.get_model("website", "Technology")
     Skill = apps.get_model("website", "Skill")
 
-    # ۱. تولید و نگاشت فناوری‌های پایه
-    tech_slug_map = {
+    # ۱. تولید فناوری‌های واقعی و ملموس (پرهیز از ثبت لایه‌های مفهومی نظیر Front-End)
+    real_technologies = {
         "Django": "django",
         "Python": "python",
-        "Front-End": "front-end",
         "HTML": "html",
         "CSS": "css",
         "JavaScript": "javascript",
         "Git": "git",
     }
-    created_techs = {}
-    for name, slug in tech_slug_map.items():
+    tech_instances = {}
+    for name, slug in real_technologies.items():
         tech, _ = Technology.objects.get_or_create(name=name, defaults={"slug": slug})
-        created_techs[name.lower()] = tech
+        tech_instances[name.lower()] = tech
 
-    # ۲. تبدیل تگ‌های قدیمی پروژه‌ها به مدل فناوری و انتساب اسلاگ معتبر
+    # ۲. نگاشت پروژه‌ها: تفکیک فناوری‌ها، اسلاگ‌های معتبر و حفظ demo_url خالی
     for project in Project.objects.all():
-        if project.tag:
-            tag_name = project.tag.strip()
-            tech = created_techs.get(tag_name.lower())
-            if not tech:
-                tech, _ = Technology.objects.get_or_create(
-                    name=tag_name,
-                    defaults={"slug": slugify(tag_name, allow_unicode=True) or f"tech-{project.id}"},
-                )
-            project.technologies.add(tech)
+        tag_cleaned = (project.tag or "").strip()
+        if tag_cleaned:
+            if tag_cleaned.lower() in ["front-end", "frontend"]:
+                # پروژه ۳ با تگ Front-End بر پایه HTML, CSS, JS ساخته شده است؛
+                # فناوری‌های واقعی آن به جای عبارت کلی فرانت‌اند متصل می‌شوند:
+                for t_name in ["html", "css", "javascript"]:
+                    if t_name in tech_instances:
+                        project.technologies.add(tech_instances[t_name])
+            else:
+                tech = tech_instances.get(tag_cleaned.lower())
+                if tech:
+                    project.technologies.add(tech)
 
-        if not project.demo_url and project.url:
-            project.demo_url = project.url
+        # آدرس لوکال‌هاست قدیمی به demo_url منتقل نمی‌شود و demo_url خالی (None) باقی می‌ماند
+        project.demo_url = None
 
+        # انتساب اسلاگ‌های یکتا و خوانا برای پروژه‌های موجود
         if not project.slug:
             if project.id == 1:
                 project.slug = "cms-panel"
@@ -48,7 +51,7 @@ def migrate_legacy_data(apps, schema_editor):
                 project.slug = slugify(project.title, allow_unicode=True) or f"project-{project.id}"
         project.save()
 
-    # ۳. دسته‌بندی مهارت‌های قدیمی بر اساس ماهیت تخصصی و واقعی هر مهارت
+    # ۳. دسته‌بندی مهارت‌های قدیمی بر اساس ماهیت واقعی فنی هر مهارت
     skill_category_map = {
         "Python": "backend",
         "Django": "backend",
@@ -65,8 +68,23 @@ def migrate_legacy_data(apps, schema_editor):
 
 
 def reverse_migration(apps, schema_editor):
-    # این عملیات برای برگشت‌پذیری ساختار نیازی به حذف فیزیکی داده‌ها ندارد
-    pass
+    """
+    پیاده‌سازی واقعی بازگشت مایگریشن:
+    - پاکسازی روابط چندبه‌چند فناوری‌های پروژه‌ها
+    - پاکسازی اسلاگ‌ها و ریست فیلد demo_url
+    - بازگرداندن دسته‌بندی مهارت‌ها به مقدار پیش‌فرض بک‌اند
+    """
+    Project = apps.get_model("website", "Project")
+    Skill = apps.get_model("website", "Skill")
+
+    for project in Project.objects.all():
+        project.technologies.clear()
+        project.demo_url = None
+        project.save()
+
+    for skill in Skill.objects.all():
+        skill.category = "backend"
+        skill.save()
 
 
 class Migration(migrations.Migration):
@@ -78,4 +96,3 @@ class Migration(migrations.Migration):
     operations = [
         migrations.RunPython(migrate_legacy_data, reverse_migration),
     ]
-

@@ -9,7 +9,7 @@ class Profile(models.Model):
     headline = models.CharField(
         max_length=150,
         blank=True,
-        default="توسعه‌دهنده بک‌اند و دانشجوی شبکه و نرم‌افزار",
+        default="",
         verbose_name="عنوان حرفه‌ای ثابت",
     )
     bio_fa = models.TextField(verbose_name="شرح بیوگرافی")
@@ -19,7 +19,7 @@ class Profile(models.Model):
     current_status = models.CharField(
         max_length=150,
         blank=True,
-        default="درحال یادگیری و توسعه...",
+        default="",
         verbose_name="وضعیت کاری جاری",
     )
     email = models.EmailField(verbose_name="رایانامه")
@@ -38,8 +38,15 @@ class Profile(models.Model):
         verbose_name="فایل رزومه",
     )
     is_available_for_hire = models.BooleanField(
-        default=True,
+        default=False,
+        blank=True,
         verbose_name="آماده برای همکاری",
+    )
+    is_singleton = models.BooleanField(
+        default=True,
+        unique=True,
+        editable=False,
+        verbose_name="قید تک‌رکوردی دیتابیس",
     )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="زمان ایجاد")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="زمان به‌روزرسانی")
@@ -47,12 +54,19 @@ class Profile(models.Model):
     class Meta:
         verbose_name = "پروفایل مدیر"
         verbose_name_plural = "پروفایل مدیر"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(is_singleton=True),
+                name="profile_is_singleton_must_be_true",
+            )
+        ]
 
     def clean(self):
         if not self.pk and Profile.objects.exists():
             raise ValidationError("تنها یک رکورد پروفایل مجاز است.")
 
     def save(self, *args, **kwargs):
+        self.is_singleton = True
         if not self.pk and Profile.objects.exists():
             raise ValidationError("تنها یک رکورد پروفایل مجاز است.")
         super().save(*args, **kwargs)
