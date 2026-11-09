@@ -1,115 +1,300 @@
 from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
-
-# Create your models here.
+from django.core.exceptions import ValidationError
 
 
 class Profile(models.Model):
-    name_fa = models.CharField(max_length=50)
-    name_en = models.CharField(max_length=50)
-    bio_fa = models.TextField()
-    # bio_en = models.TextField()
-    bio_login = models.TextField()
-    status_fa = models.CharField(max_length=100, blank=True)
-    status_login = models.TextField(blank=True)
-    # status_en = models.CharField(max_length=100, blank=True)
-    email = models.EmailField()
-    github = models.URLField()
-    linkedin = models.URLField()
-    # location = models.CharField(max_length=100, blank=True)
-    # role = models.CharField(max_length=100, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    # image
+    name_fa = models.CharField(max_length=50, verbose_name="نام فارسی")
+    name_en = models.CharField(max_length=50, verbose_name="نام انگلیسی")
+    headline = models.CharField(
+        max_length=150,
+        blank=True,
+        default="توسعه‌دهنده بک‌اند و دانشجوی شبکه و نرم‌افزار",
+        verbose_name="عنوان حرفه‌ای ثابت",
+    )
+    bio_fa = models.TextField(verbose_name="شرح بیوگرافی")
+    bio_login = models.TextField(blank=True, verbose_name="متن لاگین قدیمی")
+    status_fa = models.CharField(max_length=100, blank=True, verbose_name="وضعیت قبلی")
+    status_login = models.TextField(blank=True, verbose_name="پیام لاگین قدیمی")
+    current_status = models.CharField(
+        max_length=150,
+        blank=True,
+        default="درحال یادگیری و توسعه...",
+        verbose_name="وضعیت کاری جاری",
+    )
+    email = models.EmailField(verbose_name="رایانامه")
+    github = models.URLField(blank=True, verbose_name="گیت‌هاب")
+    linkedin = models.URLField(blank=True, verbose_name="لینکدین")
+    avatar = models.ImageField(
+        upload_to="avatars/",
+        blank=True,
+        null=True,
+        verbose_name="تصویر پرسنلی",
+    )
+    resume_file = models.FileField(
+        upload_to="resumes/",
+        blank=True,
+        null=True,
+        verbose_name="فایل رزومه",
+    )
+    is_available_for_hire = models.BooleanField(
+        default=True,
+        verbose_name="آماده برای همکاری",
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="زمان ایجاد")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="زمان به‌روزرسانی")
+
+    class Meta:
+        verbose_name = "پروفایل مدیر"
+        verbose_name_plural = "پروفایل مدیر"
+
+    def clean(self):
+        if not self.pk and Profile.objects.exists():
+            raise ValidationError("تنها یک رکورد پروفایل مجاز است.")
+
+    def __str__(self):
+        return f"{self.name_fa} ({self.name_en})"
 
 
 class Headline(models.Model):
-    text = models.CharField(max_length=200)
-    order = models.IntegerField(default=0)
+    """عبارت‌های متحرک برای انیمیشن تایپ در هدر سایت."""
+    text = models.CharField(max_length=200, verbose_name="متن عنوان")
+    order = models.IntegerField(default=0, verbose_name="ترتیب نمایش")
+
+    class Meta:
+        verbose_name = "عنوان متحرک هدر"
+        verbose_name_plural = "عناوین متحرک هدر"
+        ordering = ["order"]
+
+    def __str__(self):
+        return self.text
 
 
 class Stat(models.Model):
-    value = models.CharField(max_length=20)
-    label = models.CharField(max_length=100)
-    order = models.PositiveIntegerField(default=0)
+    value = models.CharField(max_length=20, verbose_name="مقدار آماری")
+    label = models.CharField(max_length=100, verbose_name="عنوان آمار")
+    order = models.PositiveIntegerField(default=0, verbose_name="ترتیب نمایش")
+
+    class Meta:
+        verbose_name = "آمار دستاورد"
+        verbose_name_plural = "آمارهای دستاوردها"
+        ordering = ["order"]
+
+    def __str__(self):
+        return f"{self.label}: {self.value}"
 
 
 class AboutCard(models.Model):
-    icon = models.CharField(max_length=100)
-    title = models.CharField(max_length=100)
-    description = models.TextField()
-    order = models.PositiveIntegerField(default=0)
+    icon = models.CharField(max_length=100, verbose_name="کلاس آیکون")
+    title = models.CharField(max_length=100, verbose_name="عنوان کارت")
+    description = models.TextField(verbose_name="توضیحات")
+    order = models.PositiveIntegerField(default=0, verbose_name="ترتیب نمایش")
+
+    class Meta:
+        verbose_name = "کارت درباره من"
+        verbose_name_plural = "کارت‌های درباره من"
+        ordering = ["order"]
+
+    def __str__(self):
+        return self.title
+
+
+class SkillCategory(models.TextChoices):
+    BACKEND = "backend", "بک‌اند"
+    FRONTEND = "frontend", "فرانت‌اند"
+    DATABASE = "database", "پایگاه داده"
+    TOOLS = "tools", "ابزارها و دوآپس"
+    NETWORK = "network", "شبکه و زیرساخت"
 
 
 class Skill(models.Model):
-    name = models.CharField(max_length=100)
+    name = models.CharField(max_length=100, verbose_name="نام مهارت")
+    category = models.CharField(
+        max_length=20,
+        choices=SkillCategory.choices,
+        default=SkillCategory.BACKEND,
+        verbose_name="دسته‌بندی موضوعی",
+    )
     percentage = models.IntegerField(
         validators=[
             MinValueValidator(0),
             MaxValueValidator(100),
-        ]
+        ],
+        verbose_name="درصد تسلط",
     )
+    order = models.PositiveIntegerField(default=0, verbose_name="ترتیب نمایش")
+    is_featured = models.BooleanField(default=True, verbose_name="مهارت شاخص")
+
+    class Meta:
+        verbose_name = "مهارت فردی"
+        verbose_name_plural = "مهارت‌های فردی"
+        ordering = ["order", "-percentage"]
+
+    @property
+    def proficiency(self):
+        return self.percentage
+
+    def __str__(self):
+        return f"{self.name} ({self.percentage}%)"
+
+
+class Technology(models.Model):
+    """فناوری‌های پروژه‌محور مستقل از مهارت‌های فردی."""
+    name = models.CharField(max_length=50, unique=True, verbose_name="نام فناوری")
+    slug = models.SlugField(max_length=50, unique=True, allow_unicode=True, verbose_name="اسلاگ")
+
+    class Meta:
+        verbose_name = "فناوری پروژه"
+        verbose_name_plural = "فناوری‌های پروژه‌ها"
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
 
 
 class Project(models.Model):
-    title = models.CharField(max_length=100)
-    description = models.TextField()
-
-    image = models.ImageField(
-        upload_to='images/',
-        default='images/default_image.jpg'
+    title = models.CharField(max_length=100, verbose_name="عنوان پروژه")
+    slug = models.SlugField(
+        max_length=120,
+        unique=True,
+        null=True,
+        blank=True,
+        allow_unicode=True,
+        verbose_name="اسلاگ یکتا",
     )
+    description = models.TextField(verbose_name="شرح پروژه")
+    image = models.ImageField(
+        upload_to="images/",
+        default="images/default_image.jpg",
+        verbose_name="تصویر پیش‌نمایش",
+    )
+    tag = models.CharField(
+        max_length=100,
+        blank=True,
+        verbose_name="برچسب متنی قدیمی",
+        help_text="جهت حفظ سازگاری قالب‌های قدیمی",
+    )
+    technologies = models.ManyToManyField(
+        Technology,
+        blank=True,
+        related_name="projects",
+        verbose_name="فناوری‌های پروژه",
+    )
+    url = models.URLField(
+        blank=True,
+        verbose_name="لینک عمومی قدیمی",
+        help_text="جهت حفظ سازگاری قالب‌های قدیمی",
+    )
+    demo_url = models.URLField(
+        blank=True,
+        null=True,
+        verbose_name="پیوند نسخه زنده",
+    )
+    github_url = models.URLField(
+        blank=True,
+        null=True,
+        verbose_name="پیوند مخزن کد گیت‌هاب",
+    )
+    order = models.PositiveIntegerField(default=0, verbose_name="ترتیب نمایش")
+    is_featured = models.BooleanField(default=False, verbose_name="پروژه ویژه")
 
-    tag = models.CharField(max_length=100)
-    url = models.URLField()
+    class Meta:
+        verbose_name = "پروژه نمونه‌کار"
+        verbose_name_plural = "پروژه‌ها"
+        ordering = ["order", "id"]
+
+    def __str__(self):
+        return self.title
+
 
 class Category(models.Model):
+    title = models.CharField(max_length=100, verbose_name="عنوان دسته")
+    slug = models.SlugField(max_length=100, unique=True, allow_unicode=True, verbose_name="اسلاگ")
 
-    title = models.CharField(max_length=100)
-    slug = models.SlugField(max_length=100, unique=True, allow_unicode=True)
+    class Meta:
+        verbose_name = "دسته‌بندی وبلاگ"
+        verbose_name_plural = "دسته‌بندی‌های وبلاگ"
+        ordering = ["title"]
 
     def __str__(self):
         return self.title
 
 
 class BlogPost(models.Model):
-    title = models.CharField(max_length=200)
+    class PostStatus(models.TextChoices):
+        DRAFT = "draft", "پیش‌نویس"
+        PUBLISHED = "published", "منتشر شده"
 
+    title = models.CharField(max_length=200, verbose_name="عنوان مقاله")
     slug = models.SlugField(
         max_length=220,
         unique=True,
-        allow_unicode=True
+        allow_unicode=True,
+        verbose_name="اسلاگ یکتا",
     )
-
     category = models.ForeignKey(
         Category,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='posts'
+        related_name="posts",
+        verbose_name="دسته‌بندی",
     )
-
-    description = models.TextField()
-    content = models.TextField()
-
-    published_at = models.DateTimeField(
-        auto_now_add=True
+    description = models.TextField(verbose_name="چکیده کوتاه")
+    content = models.TextField(verbose_name="متن کامل مقاله")
+    cover_image = models.ImageField(
+        upload_to="blog_covers/",
+        blank=True,
+        null=True,
+        verbose_name="تصویر شاخص",
     )
+    reading_time = models.PositiveIntegerField(
+        default=5,
+        verbose_name="زمان تخمینی مطالعه (دقیقه)",
+    )
+    status = models.CharField(
+        max_length=10,
+        choices=PostStatus.choices,
+        default=PostStatus.PUBLISHED,
+        verbose_name="وضعیت انتشار",
+    )
+    published_at = models.DateTimeField(auto_now_add=True, verbose_name="زمان انتشار")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="زمان آخرین به‌روزرسانی")
+
+    class Meta:
+        verbose_name = "مقاله وبلاگ"
+        verbose_name_plural = "مقالات وبلاگ"
+        ordering = ["-published_at"]
 
     def __str__(self):
         return self.title
 
 
 class ContactMessage(models.Model):
-    name = models.CharField(max_length=100)
-    email = models.EmailField()
-    subject = models.CharField(max_length=100)
-    message = models.TextField()
-    created_at = models.DateTimeField(auto_now_add=True)
+    name = models.CharField(max_length=100, verbose_name="نام فرستنده")
+    email = models.EmailField(verbose_name="رایانامه")
+    subject = models.CharField(max_length=100, verbose_name="موضوع پیام")
+    message = models.TextField(verbose_name="متن پیام")
+    is_read = models.BooleanField(default=False, verbose_name="خوانده شده")
+    ip_hash = models.CharField(max_length=64, blank=True, verbose_name="هش شناسه کاربر")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="زمان ثبت")
+
+    class Meta:
+        verbose_name = "پیام مخاطب"
+        verbose_name_plural = "پیام‌های مخاطبان"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.name} - {self.subject}"
 
 
 class SocialLink(models.Model):
-    # platform = models.CharField(max_length=100)
-    url = models.URLField()
-    icon = models.CharField(max_length=100)
+    url = models.URLField(verbose_name="پیوند اینترنتی")
+    icon = models.CharField(max_length=100, verbose_name="کلاس آیکون")
 
+    class Meta:
+        verbose_name = "پیوند شبکه اجتماعی"
+        verbose_name_plural = "پیوندهای شبکه‌های اجتماعی"
+
+    def __str__(self):
+        return self.url

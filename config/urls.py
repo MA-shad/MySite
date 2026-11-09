@@ -22,6 +22,7 @@ from website import views
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('api/v1/', include('website.api_urls')),
     path('', include('website.urls')),
     path('login/', include('login.urls')),
     path('test/', views.test_view, name='test'),
